@@ -43,6 +43,7 @@ WEEKDAYS=1-5
 | PASSWORD          | Senha da plataforma Senior                                               |
 | SCHEDULES         | Horários de marcação (ex: "08:00,12:00")                                 |
 | WEEKDAYS          | Dias da semana (0=Domingo, 1=Segunda..., ex: "1-5" para dias úteis)      |
+| TZ                | Fuso horário para marcação do ponto                                      |
 | RANDOM_OFFSET     | Variação máxima em segundos (padrão: 300)                                |
 | WEBHOOK_URL       | URL para notificações (opcional)                                         |
 | DEBUG             | Habilita logs detalhados (true/false)                                    |
