@@ -65,8 +65,8 @@ docker logs -f senior-auto-ponto
 
 Exemplo de saída:
 ```
-[INFO] 2025-02-02T09:00:00Z Agendando para 08:57:32 (offset: -148s)
-[INFO] 2025-02-02T09:00:00Z Marcação de ponto registrada com sucesso
+[INFO] 2025-02-03T09:00:00.000-03:00 Agendando para 08:57:32 (offset: -148s)
+[INFO] 2025-02-03T09:00:00.000-03:00 Marcação de ponto registrada com sucesso
 ```
 
 ## Notificações via Webhook 🔔
