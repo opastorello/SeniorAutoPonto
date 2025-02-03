@@ -30,6 +30,7 @@ cp .env.example .env
 ```env
 USER=seu.usuario@empresa.com
 PASSWORD=suaSenhaSegura123
+TZ=America/Sao_Paulo
 SCHEDULES=08:00,12:00,13:00,17:30
 WEEKDAYS=1-5
 ```
