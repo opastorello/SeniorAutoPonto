@@ -28,10 +28,10 @@ cp .env.example .env
 
 3. Edite o \`.env\` com suas credenciais:
 ```env
-USER="seu.usuario@empresa.com"
-PASSWORD="suaSenhaSegura123"
-SCHEDULES="08:00,12:00,13:00,17:30"
-WEEKDAYS="1-5"
+USER=seu.usuario@empresa.com
+PASSWORD=suaSenhaSegura123
+SCHEDULES=08:00,12:00,13:00,17:30
+WEEKDAYS=1-5
 ```
 
 ## Configuração ⚙️
