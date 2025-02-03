@@ -14,9 +14,9 @@ const client = wrapper(axios.create({
 
 // Logger simplificado com níveis de severidade
 const logger = {
-  info: (...args) => console.log(`[INFO] ${new Date().toISOString()}`, ...args),
-  error: (...args) => console.error(`[ERROR] ${new Date().toISOString()}`, ...args),
-  debug: (...args) => process.env.DEBUG === 'true' && console.log(`[DEBUG] ${new Date().toISOString()}`, ...args)
+  info: (...args) => console.log(`[INFO] ${moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ')}`, ...args),
+  error: (...args) => console.error(`[ERROR] ${moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ')}`, ...args),
+  debug: (...args) => process.env.DEBUG === 'true' && console.log(`[DEBUG] ${moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ')}`, ...args)
 };
 
 // Configurações do sistema
@@ -209,7 +209,7 @@ async function punchClock(token, attempt = 1) {
 
     logger.info('Marcação de ponto registrada com sucesso');
     logger.debug('Resposta completa:', response.data);
-    
+
     return response.data;
 
   } catch (error) {
@@ -234,7 +234,7 @@ async function sendWebhook(data) {
 
   try {
     await axios.post(config.webhookUrl, {
-      timestamp: new Date().toISOString(),
+      timestamp: moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
       ...data
     });
     logger.info('Notificação enviada para webhook');
@@ -245,9 +245,8 @@ async function sendWebhook(data) {
 
 /**
  * Agenda e executa as marcações de ponto com variação temporal
-  * @param {string} token - Token de autenticação
  */
-function schedulePunches(token) {
+function schedulePunches() {
   logger.info(`Serão realizadas ${config.schedules.length} marcações de ponto nos dias estabelecidos`);
 
   config.schedules.forEach((schedule, index) => {
@@ -262,10 +261,11 @@ function schedulePunches(token) {
       try {
         // Calcula variação temporal
         const offset = Math.floor(Math.random() * config.randomOffset * 2) - config.randomOffset;
-        const baseTime = moment().tz(config.timezone).set({ hour, minute, second: 0 });
+        const baseTime = moment().tz(config.timezone).set({ hour, minute, second: 0, millisecond: 0 });
         const punchTime = baseTime.clone().add(offset, 'seconds');
+
         // Agendamento preciso com setTimeout
-        const delay = punchTime.diff(moment(), 'milliseconds');
+        const delay = punchTime.diff(moment().tz(config.timezone), 'milliseconds');
 
         logger.info(`Agendando para ${punchTime.format('HH:mm:ss')} (offset: ${offset}s)`);
         logger.debug(`Aguardando ${delay} ms para marcação`);
@@ -275,11 +275,10 @@ function schedulePunches(token) {
             const token = await authenticate();
             const result = await punchClock(token);
             
-            // Notificação via webhook
             await sendWebhook({
               status: 'success',
-              scheduledTime: baseTime.toISOString(),
-              executionTime: new Date().toISOString(),
+              scheduledTime: baseTime.format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
+              executionTime: moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
               offsetSeconds: offset,
               response: result
             });
@@ -288,13 +287,13 @@ function schedulePunches(token) {
             logger.error(`Falha no processo de marcação: ${error.message}`);
             await sendWebhook({
               status: 'error',
-              scheduledTime: baseTime.toISOString(),
-              executionTime: new Date().toISOString(),
+              scheduledTime: baseTime.format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
+              executionTime: moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
               offsetSeconds: offset,
               error: error.message
             });
           }
-        }, Math.max(delay, 0)); // Evita delays negativos
+        }, Math.max(delay, 0));
 
       } catch (error) {
         logger.error(`Erro no agendamento: ${error.message}`);
