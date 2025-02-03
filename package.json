@@ -1,0 +1,28 @@
+{
+  "name": "senior-auto-ponto",
+  "version": "1.0.0",
+  "description": "Sistema automático de batida de ponto para plataforma Senior",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "DEBUG=true node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Nícolas Pastorello (opastorello)",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "axios-cookiejar-support": "^5.0.5",
+    "dotenv": "^16.4.7",
+    "moment": "^2.30.1",
+    "node-cron": "^3.0.3",
+    "tough-cookie": "^5.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opastorello/SeniorAutoPonto.git"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
