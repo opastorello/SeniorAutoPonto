@@ -17,7 +17,7 @@ Sistema automático de marcação de ponto para a plataforma Senior, com Docker,
 
 1. Clone o repositório:
 ```bash
-git clone https://github.com/seu-usuario/SeniorAutoPonto.git
+git clone https://github.com/opastorello/SeniorAutoPonto.git
 cd SeniorAutoPonto
 ```
 
