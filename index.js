@@ -2,7 +2,7 @@ const axios = require('axios');
 const cron = require('node-cron');
 const tough = require('tough-cookie');
 const { wrapper } = require('axios-cookiejar-support');
-const moment = require('moment');
+const moment = require('moment-timezone');
 require('dotenv').config();
 
 // Configuração inicial do cliente HTTP com gerenciamento de cookies
@@ -23,6 +23,7 @@ const logger = {
 const config = {
   user: process.env.USER,
   password: process.env.PASSWORD,
+  timezone: process.env.TZ || 'America/Sao_Paulo',
   schedules: process.env.SCHEDULES ? process.env.SCHEDULES.split(',') : [],
   weekdays: process.env.WEEKDAYS || '*',
   randomOffset: parseInt(process.env.RANDOM_OFFSET || '300', 10),
@@ -261,7 +262,7 @@ function schedulePunches(token) {
       try {
         // Calcula variação temporal
         const offset = Math.floor(Math.random() * config.randomOffset * 2) - config.randomOffset;
-        const baseTime = moment().set({ hour, minute, second: 0 });
+        const baseTime = moment().tz(config.timezone).set({ hour, minute, second: 0 });
         const punchTime = baseTime.clone().add(offset, 'seconds');
         // Agendamento preciso com setTimeout
         const delay = punchTime.diff(moment(), 'milliseconds');
