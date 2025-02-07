@@ -7,6 +7,7 @@ Sistema automático de marcação de ponto para a plataforma Senior, com Docker,
 - **Marcação automática de ponto** na plataforma Senior
 - **Agendamento flexível** com sintaxe cron
 - **Variação temporal aleatória** para evitar padrões
+- **Modo férias** para ignorar marcações em períodos específicos
 - **Tentativas de reconexão** automáticas
 - Notificações via **Webhook** (Discord/Slack/MS Teams)
 - Gerenciamento seguro de **sessões e cookies**
