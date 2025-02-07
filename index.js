@@ -27,6 +27,10 @@ const config = {
   schedules: process.env.SCHEDULES ? process.env.SCHEDULES.split(',') : [],
   weekdays: process.env.WEEKDAYS || '*',
   randomOffset: parseInt(process.env.RANDOM_OFFSET || '300', 10),
+  vacationStart: process.env.VACATION_START ? 
+    moment.tz(process.env.VACATION_START, 'YYYY-MM-DD', process.env.TZ || 'America/Sao_Paulo') : null,
+  vacationEnd: process.env.VACATION_END ? 
+    moment.tz(process.env.VACATION_END, 'YYYY-MM-DD', process.env.TZ || 'America/Sao_Paulo') : null,
   webhookUrl: process.env.WEBHOOK_URL,
   maxRetries: parseInt(process.env.MAX_RETRIES || '3', 10)
 };
@@ -56,6 +60,14 @@ function formatCronSchedule(cronExpression) {
   return { time, days: formattedDays };
 }
 
+// Função para verificar se está em período de férias
+function isVacationPeriod() {
+  if (!config.vacationStart || !config.vacationEnd) return false;
+  
+  const now = moment().tz(config.timezone);
+  return now.isBetween(config.vacationStart, config.vacationEnd, null, '[]');
+}
+
 // Validação das variáveis de ambiente
 function validateConfig() {
   const requiredEnvVars = ['USER', 'PASSWORD', 'SCHEDULES', 'WEEKDAYS'];
@@ -73,6 +85,21 @@ function validateConfig() {
 
   if (process.env.WEEKDAYS && !/^(\*|\d+(-\d+)?)(,\d+(-\d+)?)*$/.test(process.env.WEEKDAYS)) {
     logger.error('Formato inválido para WEEKDAYS. Use "1-5" ou "0,6" ou "*"');
+    process.exit(1);
+  }
+
+  if ((process.env.VACATION_START && !process.env.VACATION_END) || (!process.env.VACATION_START && process.env.VACATION_END)) {
+    logger.error('Ambas VACATION_START e VACATION_END devem ser definidas para o período de férias');
+    process.exit(1);
+  }
+
+  if (process.env.VACATION_START && !moment(process.env.VACATION_START, moment.ISO_8601, true).isValid()) {
+    logger.error('Formato inválido para VACATION_START. Use o formato ISO 8601 (YYYY-MM-DD)');
+    process.exit(1);
+  }
+
+  if (process.env.VACATION_END && !moment(process.env.VACATION_END, moment.ISO_8601, true).isValid()) {
+    logger.error('Formato inválido para VACATION_END. Use o formato ISO 8601 (YYYY-MM-DD)');
     process.exit(1);
   }
 
@@ -249,6 +276,10 @@ async function sendWebhook(data) {
 function schedulePunches() {
   logger.info(`Serão realizadas ${config.schedules.length} marcações de ponto nos dias estabelecidos`);
 
+  if (config.vacationStart && config.vacationEnd) {
+    logger.info(`Modo férias ativo: ${config.vacationStart.format('DD/MM/YYYY')} - ${config.vacationEnd.format('DD/MM/YYYY')}`);
+  }
+
   config.schedules.forEach((schedule, index) => {
     const [hour, minute] = schedule.split(':');
     const cronExpression = `${minute} ${hour} * * ${config.weekdays}`;
@@ -259,6 +290,17 @@ function schedulePunches() {
 
     cron.schedule(cronExpression, async () => {
       try {
+        // Verifica período de férias
+        if (isVacationPeriod()) {
+          logger.info('Período de férias - Marcação ignorada');
+          await sendWebhook({
+            status: 'skipped',
+            reason: 'Modo férias ativo',
+            scheduledTime: moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ')
+          });
+          return;
+        }
+        
         // Calcula variação temporal
         const offset = Math.floor(Math.random() * config.randomOffset * 2) - config.randomOffset;
         const baseTime = moment().tz(config.timezone).set({ hour, minute, second: 0, millisecond: 0 });
