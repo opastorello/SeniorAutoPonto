@@ -45,6 +45,8 @@ WEEKDAYS=1-5
 | WEEKDAYS          | Dias da semana (0=Domingo, 1=Segunda..., ex: "1-5" para dias úteis)      |
 | TZ                | Fuso horário para marcação do ponto (padrão: America/Sao_Paulo)          |
 | RANDOM_OFFSET     | Variação máxima em segundos (padrão: 300)                                |
+| VACATION_START	  | Data de início das férias (formato: YYYY-MM-DD, opcional)                |
+| VACATION_END	    | Data de término das férias (formato: YYYY-MM-DD, opcional)               |
 | WEBHOOK_URL       | URL para notificações (opcional)                                         |
 | DEBUG             | Habilita logs detalhados (true/false)                                    |
 | MAX_RETRIES       | Máximo de tentativas por marcação (padrão: 3)                           |
