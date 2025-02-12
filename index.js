@@ -166,12 +166,14 @@ async function getUserData(token) {
   logger.info('Iniciando consulta de dados do usuário e da empresa');
   
   try {
-    const response = await client.get(
+    const response = await client.post(
       'https://platform.senior.com.br/t/senior.com.br/bridge/1.0/rest/hcm/pontomobile/queries/employeeByUserQuery',
+      {},
       {
         headers: {
           'Authorization': `bearer ${token}`,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.86 Safari/537.36',
+          'Content-Type': 'application/json'
         }
       }
     );
@@ -186,6 +188,7 @@ async function getUserData(token) {
     throw new Error(`Erro na consulta de dados: ${error.response?.data?.message || error.message}`);
   }
 }
+
 
 /**
  * Realiza a marcação de ponto na plataforma
@@ -229,7 +232,7 @@ async function punchClock(token, attempt = 1) {
       {
         headers: {
           'Authorization': `bearer ${token}`,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.86 Safari/537.36'
         }
       }
     );
@@ -316,7 +319,7 @@ function schedulePunches() {
           try {
             const token = await authenticate();
             const result = await punchClock(token);
-            
+
             await sendWebhook({
               status: 'success',
               scheduledTime: baseTime.format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
