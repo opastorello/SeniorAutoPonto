@@ -56,7 +56,7 @@ WEEKDAYS=1-5
 
 ```bash
 docker build -t senior-auto-ponto .
-docker run -d --name senior-auto-ponto --env-file .env senior-auto-ponto
+docker run --restart=always -d --name senior-auto-ponto --env-file .env senior-auto-ponto
 ```
 
 ## Monitoramento 📊
