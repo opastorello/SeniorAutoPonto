@@ -5,21 +5,13 @@ const { wrapper } = require('axios-cookiejar-support');
 const moment = require('moment-timezone');
 require('dotenv').config();
 
-// Configuração inicial do cliente HTTP com gerenciamento de cookies
 const cookieJar = new tough.CookieJar();
-const client = wrapper(axios.create({ 
-  jar: cookieJar,
-  withCredentials: true
-}));
+const client = wrapper(axios.create({ jar: cookieJar, withCredentials: true }));
 
-// Logger simplificado com níveis de severidade
-const logger = {
-  info: (...args) => console.log(`[INFO] ${moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ')}`, ...args),
-  error: (...args) => console.error(`[ERROR] ${moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ')}`, ...args),
-  debug: (...args) => process.env.DEBUG === 'true' && console.log(`[DEBUG] ${moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ')}`, ...args)
-};
-
-// Configurações do sistema
+/**
+ * Configurações principais do sistema obtidas de variáveis de ambiente.
+ * @constant {Object} config
+ */
 const config = {
   user: process.env.USER,
   password: process.env.PASSWORD,
@@ -27,188 +19,144 @@ const config = {
   schedules: process.env.SCHEDULES ? process.env.SCHEDULES.split(',') : [],
   weekdays: process.env.WEEKDAYS || '*',
   randomOffset: parseInt(process.env.RANDOM_OFFSET || '300', 10),
-  vacationStart: process.env.VACATION_START ? 
-    moment.tz(process.env.VACATION_START, 'YYYY-MM-DD', process.env.TZ || 'America/Sao_Paulo') : null,
-  vacationEnd: process.env.VACATION_END ? 
-    moment.tz(process.env.VACATION_END, 'YYYY-MM-DD', process.env.TZ || 'America/Sao_Paulo') : null,
-  webhookUrl: process.env.WEBHOOK_URL,
+  vacationStart: process.env.VACATION_START
+    ? moment.tz(process.env.VACATION_START, 'YYYY-MM-DD', process.env.TZ || 'America/Sao_Paulo')
+    : null,
+  vacationEnd: process.env.VACATION_END
+    ? moment.tz(process.env.VACATION_END, 'YYYY-MM-DD', process.env.TZ || 'America/Sao_Paulo')
+    : null,
+  webhookUrl: process.env.WEBHOOK_URL || null,
   maxRetries: parseInt(process.env.MAX_RETRIES || '3', 10)
 };
 
-// Função para formatar a expressão cron
-function formatCronSchedule(cronExpression) {
-  const weekDaysMap = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-  const parts = cronExpression.split(' ');
-  
-  const [minute, hour] = parts.slice(0, 2);
-  const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
-  
-  const days = parts[4];
-  if (days === '*') return { time, days: 'Todos os dias' };
-  
-  const formattedDays = days.split(',').map(part => {
-    if (part.includes('-')) {
-      const [start, end] = part.split('-').map(d => {
-        const day = parseInt(d) % 7;
-        return weekDaysMap[day];
-      });
-      return `${start}-${end}`;
-    }
-    return weekDaysMap[parseInt(part) % 7];
-  }).join(', ');
+/**
+ * Logger centralizado com suporte a níveis de severidade.
+ * Controlado por variável de ambiente DEBUG.
+ */
+const logger = {
+  info: (...args) => console.log(`[INFO] ${moment().tz(config.timezone).format('YYYY-MM-DD HH:mm:ss')}`, ...args),
+  error: (...args) => console.error(`[ERROR] ${moment().tz(config.timezone).format('YYYY-MM-DD HH:mm:ss')}`, ...args),
+  debug: (...args) => process.env.DEBUG === 'true' && console.log(`[DEBUG] ${moment().tz(config.timezone).format('YYYY-MM-DD HH:mm:ss')}`, ...args)
+};
 
-  return { time, days: formattedDays };
-}
-
-// Função para verificar se está em período de férias
-function isVacationPeriod() {
-  if (!config.vacationStart || !config.vacationEnd) return false;
-  
-  const now = moment().tz(config.timezone);
-  return now.isBetween(config.vacationStart, config.vacationEnd, null, '[]');
-}
-
-// Validação das variáveis de ambiente
+/**
+ * Valida as variáveis de ambiente obrigatórias e o formato dos parâmetros.
+ * Interrompe a execução em caso de erro crítico.
+ */
 function validateConfig() {
-  const requiredEnvVars = ['USER', 'PASSWORD', 'SCHEDULES', 'WEEKDAYS'];
-  const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+  const requiredVars = ['USER', 'PASSWORD', 'SCHEDULES'];
+  const missing = requiredVars.filter(v => !process.env[v]);
 
-  if (missingVars.length > 0) {
-    logger.error(`Variáveis de ambiente ausentes: ${missingVars.join(', ')}`);
+  if (missing.length > 0) {
+    logger.error(`Variáveis obrigatórias ausentes: ${missing.join(', ')}`);
     process.exit(1);
   }
 
-  if (!process.env.SCHEDULES.match(/^(\d{1,2}:\d{2})(,\d{1,2}:\d{2})*$/)) {
+  if (!/^\d{1,2}:\d{2}(,\d{1,2}:\d{2})*$/.test(process.env.SCHEDULES)) {
     logger.error('Formato inválido para SCHEDULES. Use "HH:mm,HH:mm,..."');
     process.exit(1);
   }
 
-  if (process.env.WEEKDAYS && !/^(\*|\d+(-\d+)?)(,\d+(-\d+)?)*$/.test(process.env.WEEKDAYS)) {
-    logger.error('Formato inválido para WEEKDAYS. Use "1-5" ou "0,6" ou "*"');
+  if ((config.vacationStart && !config.vacationEnd) || (!config.vacationStart && config.vacationEnd)) {
+    logger.error('Ambas VACATION_START e VACATION_END devem ser definidas para o modo férias.');
     process.exit(1);
   }
 
-  if ((process.env.VACATION_START && !process.env.VACATION_END) || (!process.env.VACATION_START && process.env.VACATION_END)) {
-    logger.error('Ambas VACATION_START e VACATION_END devem ser definidas para o período de férias');
+  if (config.vacationStart && !moment(config.vacationStart, moment.ISO_8601, true).isValid()) {
+    logger.error('Formato inválido para VACATION_START. Use YYYY-MM-DD.');
     process.exit(1);
   }
 
-  if (process.env.VACATION_START && !moment(process.env.VACATION_START, moment.ISO_8601, true).isValid()) {
-    logger.error('Formato inválido para VACATION_START. Use o formato ISO 8601 (YYYY-MM-DD)');
-    process.exit(1);
-  }
-
-  if (process.env.VACATION_END && !moment(process.env.VACATION_END, moment.ISO_8601, true).isValid()) {
-    logger.error('Formato inválido para VACATION_END. Use o formato ISO 8601 (YYYY-MM-DD)');
-    process.exit(1);
-  }
-
-  if (config.schedules.length === 0) {
-    logger.error('Nenhum horário definido em SCHEDULES');
+  if (config.vacationEnd && !moment(config.vacationEnd, moment.ISO_8601, true).isValid()) {
+    logger.error('Formato inválido para VACATION_END. Use YYYY-MM-DD.');
     process.exit(1);
   }
 }
 
 /**
- * Autentica na plataforma Senior e obtém token de acesso
- * @returns {Promise<string>} Token de autenticação
+ * Verifica se o sistema está em período de férias.
+ * @returns {boolean} True se a data atual estiver dentro do intervalo definido.
+ */
+function isVacationPeriod() {
+  if (!config.vacationStart || !config.vacationEnd) return false;
+  const now = moment().tz(config.timezone);
+  return now.isBetween(config.vacationStart, config.vacationEnd, null, '[]');
+}
+
+/**
+ * Autentica o usuário na plataforma Senior e obtém o token de acesso.
+ * @returns {Promise<string>} Token de autenticação JWT.
  */
 async function authenticate() {
-  logger.info('Iniciando processo de autenticação');
-  
+  logger.info('Autenticando na plataforma Senior...');
+
   try {
     const params = new URLSearchParams();
     params.append('user', config.user);
     params.append('password', config.password);
 
-    // Executa a requisição de login
-    const response = await client.post(
-      'https://platform.senior.com.br/auth/LoginServlet',
-      params.toString(),
-      {
-        headers: {
-          'Origin': 'https://platform.senior.com.br',
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Upgrade-Insecure-Requests': '1',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.86 Safari/537.36'
-        }
+    await client.post('https://platform.senior.com.br/auth/LoginServlet', params.toString(), {
+      headers: {
+        'Origin': 'https://platform.senior.com.br',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
       }
-    );
-  
-    // Extrai o cookie codificado
+    });
+
     const cookies = cookieJar.getCookiesSync('https://platform.senior.com.br');
     const tokenCookie = cookies.find(c => c.key === 'com.senior.token');
 
-    if (!tokenCookie) {
-      throw new Error('Cookie com.senior.token não encontrado');
-    }
+    if (!tokenCookie) throw new Error('Cookie com.senior.token não encontrado');
 
-    // Decodifica o token URL-encoded
-    const decodedToken = decodeURIComponent(tokenCookie.value);
-    // Converte para objeto JSON
-    const tokenData = JSON.parse(decodedToken);
-    
-    logger.info('Token obtido com sucesso');
+    const decoded = decodeURIComponent(tokenCookie.value);
+    const tokenData = JSON.parse(decoded);
+
+    logger.info('Autenticação concluída com sucesso.');
     return tokenData.access_token;
 
   } catch (error) {
-    logger.error('Falha na autenticação:', error.message);
-    throw new Error(`Erro ao obter token: ${error.message}`);
+    logger.error('Erro na autenticação:', error.message);
+    throw new Error(`Falha ao autenticar: ${error.message}`);
   }
 }
 
 /**
- * Obtém os dados do usuário e da empresa autenticado
- * @param {string} token - Token de autenticação
- * @returns {Promise<Object>} Dados do usuário em formato JSON
+ * Consulta os dados do colaborador autenticado.
+ * @param {string} token Token de autenticação JWT.
+ * @returns {Promise<Object>} Dados do colaborador.
  */
 async function getUserData(token) {
-  logger.info('Iniciando consulta de dados do usuário e da empresa');
-  
+  logger.info('Consultando dados do usuário...');
   try {
-    const response = await client.post(
+    const res = await client.post(
       'https://platform.senior.com.br/t/senior.com.br/bridge/1.0/rest/hcm/pontomobile/queries/employeeByUserQuery',
       {},
-      {
-        headers: {
-          'Authorization': `bearer ${token}`,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.86 Safari/537.36',
-          'Content-Type': 'application/json'
-        }
-      }
+      { headers: { Authorization: `bearer ${token}`, 'Content-Type': 'application/json' } }
     );
-
-    logger.info('Dados do usuário e da empresa obtidos com sucesso');
-    logger.debug('Resposta completa:', response.data.employee);
-    
-    return response.data.employee;
-
-  } catch (error) {
-    logger.error('Falha ao obter dados do usuário:', error.message);
-    throw new Error(`Erro na consulta de dados: ${error.response?.data?.message || error.message}`);
+    return res.data.employee;
+  } catch (err) {
+    throw new Error(`Falha ao obter dados do usuário: ${err.response?.data?.message || err.message}`);
   }
 }
 
-
 /**
- * Realiza a marcação de ponto na plataforma
- * @param {string} token - Token de autenticação
- * @param {number} attempt - Número da tentativa atual
- * @returns {Promise<Object>} Resposta da API
+ * Executa o registro de ponto na plataforma.
+ * Inclui tentativas automáticas em caso de erro.
+ * 
+ * @param {string} token Token de autenticação.
+ * @param {number} [attempt=1] Número da tentativa atual.
+ * @returns {Promise<Object>} Resposta da API após sucesso.
  */
 async function punchClock(token, attempt = 1) {
-  logger.info(`Tentativa ${attempt} de marcação de ponto`);
+  logger.info(`Tentando marcar ponto (tentativa ${attempt})`);
 
   const userData = await getUserData(token);
-
-  const clockingData = {
+  const payload = {
     clockingInfo: {
       company: {
         id: userData.company.id,
         arpId: userData.company.arpId,
-        identifier: userData.company.cnpj,
-        caepf: userData.company.caepf,
-        cnoNumber: userData.company.cnoNumber
+        identifier: userData.company.cnpj
       },
       employee: {
         id: userData.id,
@@ -216,160 +164,126 @@ async function punchClock(token, attempt = 1) {
         cpf: userData.cpfNumber,
         pis: userData.pis
       },
-      appVersion: "3.12.3",
+      appVersion: '3.12.3',
       timeZone: userData.company.timeZone,
       signature: {
         signatureVersion: 1,
-        signature: "N2IyZTNhYzUyOWFhNmM4YTUzM2U2YzEzMDM1MDk4NmY5MGM3MDQ0YTFkZDNhMzJjMGViZDBkM2EwZjFhYjk0Zg=="
+        signature: 'N2IyZTNhYzUyOWFhNmM4YTUzM2U2YzEzMDM1MDk4NmY5MGM3MDQ0YTFkZDNhMzJjMGViZDBkM2EwZjFhYjk0Zg=='
       },
-      use: "02"
+      use: '02'
     }
   };
-  
+
   try {
-    const response = await client.post(
-      'https://platform.senior.com.br/t/senior.com.br/bridge/1.0/rest/hcm/pontomobile_clocking_event/actions/clockingEventImportByBrowser', clockingData,
-      {
-        headers: {
-          'Authorization': `bearer ${token}`,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.86 Safari/537.36'
-        }
-      }
+    const res = await client.post(
+      'https://platform.senior.com.br/t/senior.com.br/bridge/1.0/rest/hcm/pontomobile_clocking_event/actions/clockingEventImportByBrowser',
+      payload,
+      { headers: { Authorization: `bearer ${token}` } }
     );
-
-    logger.info('Marcação de ponto registrada com sucesso');
-    logger.debug('Resposta completa:', response.data);
-
-    return response.data;
-
-  } catch (error) {
-    logger.error(`Erro na tentativa ${attempt}:`, error.message);
-    
+    logger.info('Ponto registrado com sucesso.');
+    return res.data;
+  } catch (err) {
+    logger.error(`Erro tentativa ${attempt}: ${err.message}`);
     if (attempt < config.maxRetries) {
-      logger.info(`Nova tentativa em 5 segundos...`);
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      logger.info('Tentando novamente em 5 segundos...');
+      await new Promise(r => setTimeout(r, 5000));
       return punchClock(token, attempt + 1);
     }
-    
-    throw new Error(`Falha após ${config.maxRetries} tentativas: ${error.message}`);
+    throw new Error(`Falha após ${config.maxRetries} tentativas: ${err.message}`);
   }
 }
 
 /**
- * Envia notificação para webhook
- * @param {Object} data - Dados a serem enviados
+ * Envia logs de execução para o Webhook configurado.
+ * Ignorado se WEBHOOK_URL não estiver definida.
+ * 
+ * @param {Object} data Dados de log ou evento.
  */
 async function sendWebhook(data) {
   if (!config.webhookUrl) return;
 
   try {
     await axios.post(config.webhookUrl, {
-      timestamp: moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
+      timestamp: moment().tz(config.timezone).format(),
       ...data
     });
-    logger.info('Notificação enviada para webhook');
+    logger.debug('Webhook enviado com sucesso.');
   } catch (error) {
-    logger.error('Erro ao enviar webhook:', error.message);
+    logger.error('Falha ao enviar webhook:', error.message);
   }
 }
 
 /**
- * Agenda e executa as marcações de ponto com variação temporal
+ * Agenda as marcações de ponto automáticas.
+ * Executa a cada minuto, verificando se o horário atual
+ * está dentro da janela de execução ajustada por offset.
  */
 function schedulePunches() {
-  logger.info(`Serão realizadas ${config.schedules.length} marcações de ponto nos dias estabelecidos`);
+  logger.info(`Agendamento iniciado. ${config.schedules.length} horários configurados: ${config.schedules.join(', ')}`);
+  if (config.vacationStart && config.vacationEnd)
+    logger.info(`Modo férias ativo: ${config.vacationStart.format('DD/MM/YYYY')} → ${config.vacationEnd.format('DD/MM/YYYY')}`);
 
-  if (config.vacationStart && config.vacationEnd) {
-    logger.info(`Modo férias ativo: ${config.vacationStart.format('DD/MM/YYYY')} - ${config.vacationEnd.format('DD/MM/YYYY')}`);
-  }
+  cron.schedule('* * * * *', async () => {
+    const now = moment().tz(config.timezone);
 
-  config.schedules.forEach((schedule, index) => {
-    const [hour, minute] = schedule.split(':');
-    const cronExpression = `${minute} ${hour} * * ${config.weekdays}`;
+    for (const schedule of config.schedules) {
+      const [hour, minute] = schedule.split(':').map(Number);
+      const baseTime = moment().tz(config.timezone).set({ hour, minute, second: 0, millisecond: 0 });
+      const offset = Math.floor(Math.random() * config.randomOffset * 2) - config.randomOffset;
+      const punchTime = baseTime.clone().add(offset, 'seconds');
 
-    const { time, days } = formatCronSchedule(cronExpression);
-
-    logger.info(`(${index + 1}/${config.schedules.length}) ${days} às ${time}`);
-
-    cron.schedule(cronExpression, async () => {
-      try {
-        // Verifica período de férias
+      // Executa se o horário atual estiver dentro da janela ajustada
+      if (now.isBetween(punchTime.clone().subtract(30, 'seconds'), punchTime.clone().add(30, 'seconds'))) {
         if (isVacationPeriod()) {
-          logger.info('Período de férias - Marcação ignorada');
-          await sendWebhook({
-            status: 'skipped',
-            reason: 'Modo férias ativo',
-            scheduledTime: moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ')
-          });
-          return;
+          logger.info('Modo férias ativo — marcação ignorada.');
+          await sendWebhook({ status: 'skipped', reason: 'vacation_period', scheduled: punchTime.format() });
+          continue;
         }
-        
-        // Calcula variação temporal
-        const offset = Math.floor(Math.random() * config.randomOffset * 2) - config.randomOffset;
-        const baseTime = moment().tz(config.timezone).set({ hour, minute, second: 0, millisecond: 0 });
-        const punchTime = baseTime.clone().add(offset, 'seconds');
 
-        // Agendamento preciso com setTimeout
-        const delay = punchTime.diff(moment().tz(config.timezone), 'milliseconds');
-
-        logger.info(`Agendando para ${punchTime.format('HH:mm:ss')} (offset: ${offset}s)`);
-        logger.debug(`Aguardando ${delay} ms para marcação`);
-
-        setTimeout(async () => {
-          try {
-            const token = await authenticate();
-            const result = await punchClock(token);
-
-            await sendWebhook({
-              status: 'success',
-              scheduledTime: baseTime.format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
-              executionTime: moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
-              offsetSeconds: offset,
-              response: result
-            });
-
-          } catch (error) {
-            logger.error(`Falha no processo de marcação: ${error.message}`);
-            await sendWebhook({
-              status: 'error',
-              scheduledTime: baseTime.format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
-              executionTime: moment().tz(config.timezone).format('YYYY-MM-DDTHH:mm:ss.SSSZ'),
-              offsetSeconds: offset,
-              error: error.message
-            });
-          }
-        }, Math.max(delay, 0));
-
-      } catch (error) {
-        logger.error(`Erro no agendamento: ${error.message}`);
-        sendWebhook({
-          status: 'error',
-          error: `Erro no agendamento: ${error.message}`
-        });
+        logger.info(`Executando marcação: base ${baseTime.format('HH:mm')} | offset ${offset}s | efetiva ${punchTime.format('HH:mm:ss')}`);
+        try {
+          const token = await authenticate();
+          const result = await punchClock(token);
+          await sendWebhook({
+            status: 'success',
+            baseTime: baseTime.format(),
+            executed: now.format(),
+            offsetSeconds: offset,
+            response: result
+          });
+        } catch (error) {
+          logger.error(`Erro ao marcar ponto: ${error.message}`);
+          await sendWebhook({
+            status: 'error',
+            baseTime: baseTime.format(),
+            executed: now.format(),
+            offsetSeconds: offset,
+            error: error.message
+          });
+        }
       }
-    });
+    }
   });
 }
 
 /**
- * Fluxo principal da aplicação
+ * Função principal do sistema.
+ * Valida configurações e inicializa o agendador.
  */
 async function main() {
   try {
     validateConfig();
-    logger.info('Iniciando serviço de marcação de ponto automática');
+    logger.info('Serviço de marcação automática iniciado.');
     schedulePunches();
-    
-    // Mantém o processo ativo
-    setInterval(() => {
-      logger.debug('Serviço em execução...');
-    }, 60000);
 
+    // Mantém processo ativo para execuções contínuas
+    setInterval(() => {
+      logger.debug('Serviço rodando...');
+    }, 60000);
   } catch (error) {
     logger.error('Falha crítica na inicialização:', error.message);
     process.exit(1);
   }
 }
 
-// Inicia a aplicação
 main();
