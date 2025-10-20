@@ -17,7 +17,7 @@ const config = {
   password: process.env.PASSWORD,
   timezone: process.env.TZ || 'America/Sao_Paulo',
   schedules: process.env.SCHEDULES ? process.env.SCHEDULES.split(',') : [],
-  weekdays: process.env.WEEKDAYS || '*',
+  weekdays: process.env.WEEKDAYS || '*', // aceita "*", "1-5", "0,6", "1,2,3,4,5", etc.
   randomOffset: parseInt(process.env.RANDOM_OFFSET || '300', 10),
   vacationStart: process.env.VACATION_START
     ? moment.tz(process.env.VACATION_START, 'YYYY-MM-DD', process.env.TZ || 'America/Sao_Paulo')
@@ -40,14 +40,61 @@ const logger = {
 };
 
 /**
- * Valida as variáveis de ambiente obrigatórias e o formato dos parâmetros.
+ * Analisa a string WEEKDAYS e retorna um Set com dias permitidos.
+ * Convenção: Sunday=0, Monday=1, ..., Saturday=6.
+ * Aceita 7 como domingo (convertido para 0).
+ *
+ * Exemplos:
+ *  - "*": todos os dias
+ *  - "1-5": seg–sex
+ *  - "0,6": dom e sáb
+ *  - "1,2,3,4,5": seg–sex
+ *
+ * @param {string} pattern Ex.: "*", "1-5", "0,6"
+ * @returns {{ all:boolean, days:Set<number> }}
+ */
+function parseWeekdaysPattern(pattern) {
+  if (!pattern || pattern.trim() === '*' ) {
+    return { all: true, days: new Set() };
+  }
+
+  const parts = pattern.split(',');
+  const days = new Set();
+
+  for (const part of parts) {
+    if (part.includes('-')) {
+      const [startStr, endStr] = part.split('-');
+      let start = parseInt(startStr, 10);
+      let end = parseInt(endStr, 10);
+      if (Number.isNaN(start) || Number.isNaN(end)) throw new Error('WEEKDAYS inválido (intervalo não numérico).');
+      if (start === 7) start = 0;
+      if (end === 7) end = 0;
+
+      // intervalos devem ser “lineares” no padrão (sem wrap-around)
+      if (start > end && !(start === 0 && end === 0)) {
+        throw new Error('WEEKDAYS inválido: intervalos devem ser crescentes (ex.: "1-5").');
+      }
+      for (let d = start; d <= end; d++) days.add(d % 7);
+    } else {
+      let d = parseInt(part, 10);
+      if (Number.isNaN(d)) throw new Error('WEEKDAYS inválido (token não numérico).');
+      if (d < 0 || d > 7) throw new Error('WEEKDAYS inválido: dias devem estar entre 0 e 7.');
+      if (d === 7) d = 0;
+      days.add(d);
+    }
+  }
+
+  return { all: false, days };
+}
+
+/**
+ * Valida as variáveis obrigatórias e formatos.
  * Interrompe a execução em caso de erro crítico.
  */
 function validateConfig() {
-  const requiredVars = ['USER', 'PASSWORD', 'SCHEDULES'];
-  const missing = requiredVars.filter(v => !process.env[v]);
-
-  if (missing.length > 0) {
+  const required = ['USER', 'PASSWORD', 'SCHEDULES'];
+  const missing = required.filter(v => !process.env[v]);
+  if (missing.length) {
     logger.error(`Variáveis obrigatórias ausentes: ${missing.join(', ')}`);
     process.exit(1);
   }
@@ -57,25 +104,42 @@ function validateConfig() {
     process.exit(1);
   }
 
+  // WEEKDAYS: aceita "*", ou lista/intervalos de números 0-7 (7=domingo)
+  if (!/^(\*|[0-7](-[0-7])?(,[0-7](-[0-7])?)*)$/.test(config.weekdays)) {
+    logger.error('Formato inválido para WEEKDAYS. Exemplos válidos: "*", "1-5", "0,6", "1,2,3,4,5".');
+    process.exit(1);
+  }
+
+  // valida férias (ambos ou nenhum)
   if ((config.vacationStart && !config.vacationEnd) || (!config.vacationStart && config.vacationEnd)) {
-    logger.error('Ambas VACATION_START e VACATION_END devem ser definidas para o modo férias.');
+    logger.error('Defina VACATION_START e VACATION_END juntos.');
     process.exit(1);
   }
-
   if (config.vacationStart && !moment(config.vacationStart, moment.ISO_8601, true).isValid()) {
-    logger.error('Formato inválido para VACATION_START. Use YYYY-MM-DD.');
+    logger.error('VACATION_START inválido. Use YYYY-MM-DD.');
     process.exit(1);
   }
-
   if (config.vacationEnd && !moment(config.vacationEnd, moment.ISO_8601, true).isValid()) {
-    logger.error('Formato inválido para VACATION_END. Use YYYY-MM-DD.');
+    logger.error('VACATION_END inválido. Use YYYY-MM-DD.');
     process.exit(1);
   }
 }
 
 /**
- * Verifica se o sistema está em período de férias.
- * @returns {boolean} True se a data atual estiver dentro do intervalo definido.
+ * Indica se hoje é um dia permitido conforme WEEKDAYS.
+ * @param {moment.Moment} now Momento atual com timezone aplicado.
+ * @param {{all:boolean, days:Set<number>}} wd Dias permitidos.
+ * @returns {boolean}
+ */
+function isAllowedWeekday(now, wd) {
+  if (wd.all) return true;
+  const dow = now.day(); // 0..6 (0=domingo)
+  return wd.days.has(dow);
+}
+
+/**
+ * Retorna true se hoje está no período de férias (inclusive).
+ * @returns {boolean}
  */
 function isVacationPeriod() {
   if (!config.vacationStart || !config.vacationEnd) return false;
@@ -84,12 +148,11 @@ function isVacationPeriod() {
 }
 
 /**
- * Autentica o usuário na plataforma Senior e obtém o token de acesso.
- * @returns {Promise<string>} Token de autenticação JWT.
+ * Autentica na plataforma Senior e retorna token de acesso.
+ * @returns {Promise<string>}
  */
 async function authenticate() {
   logger.info('Autenticando na plataforma Senior...');
-
   try {
     const params = new URLSearchParams();
     params.append('user', config.user);
@@ -105,15 +168,12 @@ async function authenticate() {
 
     const cookies = cookieJar.getCookiesSync('https://platform.senior.com.br');
     const tokenCookie = cookies.find(c => c.key === 'com.senior.token');
-
     if (!tokenCookie) throw new Error('Cookie com.senior.token não encontrado');
 
     const decoded = decodeURIComponent(tokenCookie.value);
     const tokenData = JSON.parse(decoded);
-
     logger.info('Autenticação concluída com sucesso.');
     return tokenData.access_token;
-
   } catch (error) {
     logger.error('Erro na autenticação:', error.message);
     throw new Error(`Falha ao autenticar: ${error.message}`);
@@ -121,9 +181,9 @@ async function authenticate() {
 }
 
 /**
- * Consulta os dados do colaborador autenticado.
- * @param {string} token Token de autenticação JWT.
- * @returns {Promise<Object>} Dados do colaborador.
+ * Obtém dados do colaborador autenticado.
+ * @param {string} token
+ * @returns {Promise<Object>}
  */
 async function getUserData(token) {
   logger.info('Consultando dados do usuário...');
@@ -140,17 +200,15 @@ async function getUserData(token) {
 }
 
 /**
- * Executa o registro de ponto na plataforma.
- * Inclui tentativas automáticas em caso de erro.
- * 
- * @param {string} token Token de autenticação.
- * @param {number} [attempt=1] Número da tentativa atual.
- * @returns {Promise<Object>} Resposta da API após sucesso.
+ * Realiza a marcação de ponto; inclui retentativas.
+ * @param {string} token
+ * @param {number} [attempt=1]
+ * @returns {Promise<Object>}
  */
 async function punchClock(token, attempt = 1) {
-  logger.info(`Tentando marcar ponto (tentativa ${attempt})`);
-
+  logger.info(`Marcando ponto (tentativa ${attempt})`);
   const userData = await getUserData(token);
+
   const payload = {
     clockingInfo: {
       company: {
@@ -185,7 +243,7 @@ async function punchClock(token, attempt = 1) {
   } catch (err) {
     logger.error(`Erro tentativa ${attempt}: ${err.message}`);
     if (attempt < config.maxRetries) {
-      logger.info('Tentando novamente em 5 segundos...');
+      logger.info('Nova tentativa em 5 segundos...');
       await new Promise(r => setTimeout(r, 5000));
       return punchClock(token, attempt + 1);
     }
@@ -194,60 +252,74 @@ async function punchClock(token, attempt = 1) {
 }
 
 /**
- * Envia logs de execução para o Webhook configurado.
- * Ignorado se WEBHOOK_URL não estiver definida.
- * 
- * @param {Object} data Dados de log ou evento.
+ * Envia evento ao Webhook (se configurado).
+ * @param {Object} data
+ * @returns {Promise<void>}
  */
 async function sendWebhook(data) {
   if (!config.webhookUrl) return;
-
   try {
     await axios.post(config.webhookUrl, {
       timestamp: moment().tz(config.timezone).format(),
       ...data
     });
-    logger.debug('Webhook enviado com sucesso.');
+    logger.debug('Webhook enviado.');
   } catch (error) {
     logger.error('Falha ao enviar webhook:', error.message);
   }
 }
 
 /**
- * Agenda as marcações de ponto automáticas.
- * Executa a cada minuto, verificando se o horário atual
- * está dentro da janela de execução ajustada por offset.
+ * Agenda as marcações a cada minuto, respeitando WEEKDAYS e OFFSET.
+ * - Se hoje não for dia permitido, não executa nada.
+ * - Para cada horário base, calcula um offset aleatório em ±RANDOM_OFFSET
+ *   e executa quando o "now" cair na janela de ±30s do "punchTime".
  */
 function schedulePunches() {
-  logger.info(`Agendamento iniciado. ${config.schedules.length} horários configurados: ${config.schedules.join(', ')}`);
-  if (config.vacationStart && config.vacationEnd)
-    logger.info(`Modo férias ativo: ${config.vacationStart.format('DD/MM/YYYY')} → ${config.vacationEnd.format('DD/MM/YYYY')}`);
+  const parsedWd = parseWeekdaysPattern(config.weekdays);
+  logger.info(
+    `Agendamento ativo | Horários: ${config.schedules.join(', ')} | WEEKDAYS: ${config.weekdays} | TZ: ${config.timezone}`
+  );
+  if (config.vacationStart && config.vacationEnd) {
+    logger.info(`Férias: ${config.vacationStart.format('DD/MM/YYYY')} → ${config.vacationEnd.format('DD/MM/YYYY')}`);
+  }
 
   cron.schedule('* * * * *', async () => {
     const now = moment().tz(config.timezone);
 
+    // Respeita WEEKDAYS
+    if (!isAllowedWeekday(now, parsedWd)) {
+      logger.debug(`Dia ${now.day()} não permitido por WEEKDAYS (${config.weekdays}).`);
+      return;
+    }
+
     for (const schedule of config.schedules) {
       const [hour, minute] = schedule.split(':').map(Number);
       const baseTime = moment().tz(config.timezone).set({ hour, minute, second: 0, millisecond: 0 });
+
+      // Calcula offset aleatório (±RANDOM_OFFSET segundos)
       const offset = Math.floor(Math.random() * config.randomOffset * 2) - config.randomOffset;
       const punchTime = baseTime.clone().add(offset, 'seconds');
 
-      // Executa se o horário atual estiver dentro da janela ajustada
+      // Executa se estamos na janela de ±30s do horário calculado
       if (now.isBetween(punchTime.clone().subtract(30, 'seconds'), punchTime.clone().add(30, 'seconds'))) {
         if (isVacationPeriod()) {
-          logger.info('Modo férias ativo — marcação ignorada.');
-          await sendWebhook({ status: 'skipped', reason: 'vacation_period', scheduled: punchTime.format() });
+          logger.info('Período de férias — marcação ignorada.');
+          await sendWebhook({ status: 'skipped', reason: 'vacation_period', scheduled: punchTime.toISOString() });
           continue;
         }
 
-        logger.info(`Executando marcação: base ${baseTime.format('HH:mm')} | offset ${offset}s | efetiva ${punchTime.format('HH:mm:ss')}`);
+        logger.info(
+          `Execução: base ${baseTime.format('HH:mm')} | offset ${offset}s | efetiva ${punchTime.format('HH:mm:ss')}`
+        );
+
         try {
           const token = await authenticate();
           const result = await punchClock(token);
           await sendWebhook({
             status: 'success',
-            baseTime: baseTime.format(),
-            executed: now.format(),
+            baseTime: baseTime.toISOString(),
+            executed: now.toISOString(),
             offsetSeconds: offset,
             response: result
           });
@@ -255,8 +327,8 @@ function schedulePunches() {
           logger.error(`Erro ao marcar ponto: ${error.message}`);
           await sendWebhook({
             status: 'error',
-            baseTime: baseTime.format(),
-            executed: now.format(),
+            baseTime: baseTime.toISOString(),
+            executed: now.toISOString(),
             offsetSeconds: offset,
             error: error.message
           });
@@ -267,18 +339,16 @@ function schedulePunches() {
 }
 
 /**
- * Função principal do sistema.
- * Valida configurações e inicializa o agendador.
+ * Ponto de entrada: valida config e inicia agendamento.
  */
 async function main() {
   try {
     validateConfig();
-    logger.info('Serviço de marcação automática iniciado.');
     schedulePunches();
 
-    // Mantém processo ativo para execuções contínuas
+    // Mantém processo ativo com heartbeat opcional
     setInterval(() => {
-      logger.debug('Serviço rodando...');
+      logger.debug('Heartbeat: serviço ativo.');
     }, 60000);
   } catch (error) {
     logger.error('Falha crítica na inicialização:', error.message);
