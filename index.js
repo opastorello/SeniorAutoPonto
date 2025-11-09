@@ -270,10 +270,10 @@ async function sendWebhook(data) {
 }
 
 /**
- * Agenda as marcações a cada minuto, respeitando WEEKDAYS e OFFSET.
- * - Se hoje não for dia permitido, não executa nada.
- * - Para cada horário base, calcula um offset aleatório em ±RANDOM_OFFSET
- *   e executa quando o "now" cair na janela de ±30s do "punchTime".
+ * Agenda as marcações automáticas:
+ * - Offsets são fixos por dia (gerados apenas uma vez por dia).
+ * - Marcações não se repetem no mesmo horário.
+ * - Respeita WEEKDAYS, férias e janela de ±30 segundos.
  */
 function schedulePunches() {
   const parsedWd = parseWeekdaysPattern(config.weekdays);
@@ -284,33 +284,60 @@ function schedulePunches() {
     logger.info(`Férias: ${config.vacationStart.format('DD/MM/YYYY')} → ${config.vacationEnd.format('DD/MM/YYYY')}`);
   }
 
+  let todayOffsets = {};
+  let lastExecuted = {};
+
+  function generateOffsetsForToday() {
+    const today = moment().tz(config.timezone).format('YYYY-MM-DD');
+    if (todayOffsets.date === today) return; // já gerado
+
+    todayOffsets = { date: today, offsets: {} };
+    lastExecuted = {};
+
+    const usedOffsets = new Set();
+    for (const schedule of config.schedules) {
+      let offset;
+      // garante que cada horário tenha offset único no dia
+      do {
+        offset = Math.floor(Math.random() * config.randomOffset * 2) - config.randomOffset;
+      } while (usedOffsets.has(offset));
+      usedOffsets.add(offset);
+      todayOffsets.offsets[schedule] = offset;
+    }
+
+    logger.info(`Offsets gerados (${today}):`, todayOffsets.offsets);
+  }
+
   cron.schedule('* * * * *', async () => {
+    generateOffsetsForToday();
     const now = moment().tz(config.timezone);
 
-    // Respeita WEEKDAYS
-    if (!isAllowedWeekday(now, parsedWd)) {
-      logger.debug(`Dia ${now.day()} não permitido por WEEKDAYS (${config.weekdays}).`);
+    if (!isAllowedWeekday(now, parsedWd)) return;
+    if (isVacationPeriod()) {
+      logger.info('Período de férias — marcação ignorada.');
+      await sendWebhook({ status: 'skipped', reason: 'vacation_period', timestamp: now.toISOString() });
       return;
     }
 
     for (const schedule of config.schedules) {
+      const offset = todayOffsets.offsets[schedule];
       const [hour, minute] = schedule.split(':').map(Number);
       const baseTime = moment().tz(config.timezone).set({ hour, minute, second: 0, millisecond: 0 });
-
-      // Calcula offset aleatório (±RANDOM_OFFSET segundos)
-      const offset = Math.floor(Math.random() * config.randomOffset * 2) - config.randomOffset;
       const punchTime = baseTime.clone().add(offset, 'seconds');
 
-      // Executa se estamos na janela de ±30s do horário calculado
-      if (now.isBetween(punchTime.clone().subtract(30, 'seconds'), punchTime.clone().add(30, 'seconds'))) {
-        if (isVacationPeriod()) {
-          logger.info('Período de férias — marcação ignorada.');
-          await sendWebhook({ status: 'skipped', reason: 'vacation_period', scheduled: punchTime.toISOString() });
+      const windowStart = punchTime.clone().subtract(30, 'seconds');
+      const windowEnd = punchTime.clone().add(30, 'seconds');
+
+      if (now.isBetween(windowStart, windowEnd)) {
+        if (lastExecuted[schedule] === todayOffsets.date) {
+          logger.debug(`Horário ${schedule} já executado hoje.`);
           continue;
         }
 
+        lastExecuted[schedule] = todayOffsets.date;
+
         logger.info(
-          `Execução: base ${baseTime.format('HH:mm')} | offset ${offset}s | efetiva ${punchTime.format('HH:mm:ss')}`
+          `Execução: base ${baseTime.format('HH:mm')} | offset ${offset >= 0 ? '+' : ''}${offset}s | efetiva ${punchTime.format('HH:mm:ss')}`
         );
 
         try {
@@ -324,7 +351,7 @@ function schedulePunches() {
             response: result
           });
         } catch (error) {
-          logger.error(`Erro ao marcar ponto: ${error.message}`);
+          logger.error(`Erro ao marcar ponto (${schedule}): ${error.message}`);
           await sendWebhook({
             status: 'error',
             baseTime: baseTime.toISOString(),
